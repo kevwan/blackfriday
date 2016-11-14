@@ -34,6 +34,7 @@ const (
 	HTML_NOREFERRER_LINKS                      // only link with rel="noreferrer"
 	HTML_HREF_TARGET_BLANK                     // add a blank target
 	HTML_TOC                                   // generate a table of contents
+	HTML_OMIT_TOC                              // generate the main contents with id set (for a standalone table of contents)
 	HTML_OMIT_CONTENTS                         // skip the main contents (for a standalone table of contents)
 	HTML_COMPLETE_PAGE                         // generate a complete HTML page
 	HTML_USE_XHTML                             // generate XHTML output instead of HTML
@@ -43,6 +44,10 @@ const (
 	HTML_SMARTYPANTS_LATEX_DASHES              // enable LaTeX-style dashes (with HTML_USE_SMARTYPANTS and HTML_SMARTYPANTS_DASHES)
 	HTML_SMARTYPANTS_ANGLED_QUOTES             // enable angled double quotes (with HTML_USE_SMARTYPANTS) for double quotes rendering
 	HTML_FOOTNOTE_RETURN_LINKS                 // generate a link at the end of a footnote to return to the source
+)
+
+const (
+	stripChars = "零一二三四五六七八九十0123456789,.，。()（） \t"
 )
 
 var (
@@ -203,22 +208,30 @@ func (options *Html) Header(out *bytes.Buffer, text func() bool, level int, id s
 	marker := out.Len()
 	doubleSpace(out)
 
-	if id == "" && options.flags&HTML_TOC != 0 {
-		id = fmt.Sprintf("toc_%d", options.headerCount)
-	}
-
-	if id != "" {
-		id = options.ensureUniqueHeaderID(id)
-
-		if options.parameters.HeaderIDPrefix != "" {
-			id = options.parameters.HeaderIDPrefix + id
+	/*
+		if id == "" && options.flags&HTML_TOC != 0 {
+			id = fmt.Sprintf("toc_%d", options.headerCount)
 		}
 
-		if options.parameters.HeaderIDSuffix != "" {
-			id = id + options.parameters.HeaderIDSuffix
-		}
+		if id != "" {
+			id = options.ensureUniqueHeaderID(id)
 
-		out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, id))
+			if options.parameters.HeaderIDPrefix != "" {
+				id = options.parameters.HeaderIDPrefix + id
+			}
+
+			if options.parameters.HeaderIDSuffix != "" {
+				id = id + options.parameters.HeaderIDSuffix
+			}
+
+			out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, id))
+		} else {
+			out.WriteString(fmt.Sprintf("<h%d>", level))
+		}
+	*/
+
+	if options.flags&HTML_TOC != 0 {
+		out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, StripLeadingChars(string(out.Bytes()[tocMarker:]), stripChars)))
 	} else {
 		out.WriteString(fmt.Sprintf("<h%d>", level))
 	}
@@ -231,7 +244,7 @@ func (options *Html) Header(out *bytes.Buffer, text func() bool, level int, id s
 
 	// are we building a table of contents?
 	if options.flags&HTML_TOC != 0 {
-		options.TocHeaderWithAnchor(out.Bytes()[tocMarker:], level, id)
+		options.TocHeaderWithAnchor(out.Bytes()[tocMarker:], level)
 	}
 
 	out.WriteString(fmt.Sprintf("</h%d>\n", level))
@@ -729,9 +742,11 @@ func (options *Html) DocumentFooter(out *bytes.Buffer) {
 		}
 
 		// insert the table of contents
-		out.WriteString("<nav>\n")
-		out.Write(options.toc.Bytes())
-		out.WriteString("</nav>\n")
+		if options.flags|HTML_OMIT_TOC == 0 {
+			out.WriteString("<nav>\n")
+			out.Write(options.toc.Bytes())
+			out.WriteString("</nav>\n")
+		}
 
 		// corner case spacing issue
 		if options.flags&HTML_COMPLETE_PAGE == 0 && options.flags&HTML_OMIT_CONTENTS == 0 {
@@ -751,7 +766,15 @@ func (options *Html) DocumentFooter(out *bytes.Buffer) {
 
 }
 
-func (options *Html) TocHeaderWithAnchor(text []byte, level int, anchor string) {
+func (options *Html) TocHeaderWithAnchor(text []byte, level int) {
+	// we ignore h1, regard it as title
+	if level == 1 {
+		return
+	}
+
+	// minus 1 to avoid <ul> tag
+	level -= 1
+
 	for level > options.currentLevel {
 		switch {
 		case bytes.HasSuffix(options.toc.Bytes(), []byte("</li>\n")):
@@ -778,12 +801,8 @@ func (options *Html) TocHeaderWithAnchor(text []byte, level int, anchor string) 
 	}
 
 	options.toc.WriteString("<li><a href=\"#")
-	if anchor != "" {
-		options.toc.WriteString(anchor)
-	} else {
-		options.toc.WriteString("toc_")
-		options.toc.WriteString(strconv.Itoa(options.headerCount))
-	}
+	anchor := StripLeadingChars(string(text), stripChars)
+	options.toc.WriteString(anchor)
 	options.toc.WriteString("\">")
 	options.headerCount++
 
@@ -793,7 +812,7 @@ func (options *Html) TocHeaderWithAnchor(text []byte, level int, anchor string) 
 }
 
 func (options *Html) TocHeader(text []byte, level int) {
-	options.TocHeaderWithAnchor(text, level, "")
+	options.TocHeaderWithAnchor(text, level)
 }
 
 func (options *Html) TocFinalize() {

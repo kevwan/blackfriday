@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"github.com/kennygrant/sanitize"
 )
 
 // Html renderer configuration options.
@@ -47,7 +48,8 @@ const (
 )
 
 const (
-	stripChars = "零一二三四五六七八九十0123456789,.，。()（） \t"
+	stripChars = "零一二三四五六七八九十0123456789,.;，。；()（） \t"
+	replaceWithUnderscores = " \t=,.;，。；()（）"
 )
 
 var (
@@ -204,47 +206,28 @@ func (options *Html) TitleBlock(out *bytes.Buffer, text []byte) {
 	out.WriteString("\n</h1>")
 }
 
-func (options *Html) Header(out *bytes.Buffer, text func() bool, level int, id string) {
+func (options *Html) Header(out *bytes.Buffer, text func(func([]byte)) bool, level int) {
 	marker := out.Len()
 	doubleSpace(out)
 
-	/*
-		if id == "" && options.flags&HTML_TOC != 0 {
-			id = fmt.Sprintf("toc_%d", options.headerCount)
-		}
-
-		if id != "" {
-			id = options.ensureUniqueHeaderID(id)
-
-			if options.parameters.HeaderIDPrefix != "" {
-				id = options.parameters.HeaderIDPrefix + id
-			}
-
-			if options.parameters.HeaderIDSuffix != "" {
-				id = id + options.parameters.HeaderIDSuffix
-			}
-
-			out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, id))
-		} else {
-			out.WriteString(fmt.Sprintf("<h%d>", level))
-		}
-	*/
-
-	if options.flags&HTML_TOC != 0 {
-		out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, StripLeadingChars(string(out.Bytes()[tocMarker:]), stripChars)))
-	} else {
-		out.WriteString(fmt.Sprintf("<h%d>", level))
+	tocMarker := 0
+	anchor := ""
+	onText := func(headerText []byte) {
+		anchor = sanitize.HTML(string(headerText))
+		anchor = StripLeadingChars(anchor, stripChars)
+		anchor = strings.TrimSpace(anchor)
+		anchor = ReplaceChars(anchor, replaceWithUnderscores, '_')
+		out.WriteString(fmt.Sprintf("<h%d id=\"%s\">", level, anchor))
+		tocMarker = out.Len()
 	}
-
-	tocMarker := out.Len()
-	if !text() {
+	if !text(onText) {
 		out.Truncate(marker)
 		return
 	}
 
 	// are we building a table of contents?
 	if options.flags&HTML_TOC != 0 {
-		options.TocHeaderWithAnchor(out.Bytes()[tocMarker:], level)
+		options.TocHeaderWithAnchor([]byte(anchor), out.Bytes()[tocMarker:], level)
 	}
 
 	out.WriteString(fmt.Sprintf("</h%d>\n", level))
@@ -742,7 +725,7 @@ func (options *Html) DocumentFooter(out *bytes.Buffer) {
 		}
 
 		// insert the table of contents
-		if options.flags|HTML_OMIT_TOC == 0 {
+		if options.flags&HTML_OMIT_TOC == 0 {
 			out.WriteString("<nav>\n")
 			out.Write(options.toc.Bytes())
 			out.WriteString("</nav>\n")
@@ -766,7 +749,7 @@ func (options *Html) DocumentFooter(out *bytes.Buffer) {
 
 }
 
-func (options *Html) TocHeaderWithAnchor(text []byte, level int) {
+func (options *Html) TocHeaderWithAnchor(anchor, text []byte, level int) {
 	// we ignore h1, regard it as title
 	if level == 1 {
 		return
@@ -801,8 +784,7 @@ func (options *Html) TocHeaderWithAnchor(text []byte, level int) {
 	}
 
 	options.toc.WriteString("<li><a href=\"#")
-	anchor := StripLeadingChars(string(text), stripChars)
-	options.toc.WriteString(anchor)
+	options.toc.WriteString(string(anchor))
 	options.toc.WriteString("\">")
 	options.headerCount++
 
@@ -812,7 +794,7 @@ func (options *Html) TocHeaderWithAnchor(text []byte, level int) {
 }
 
 func (options *Html) TocHeader(text []byte, level int) {
-	options.TocHeaderWithAnchor(text, level)
+	options.TocHeaderWithAnchor(text, text, level)
 }
 
 func (options *Html) TocFinalize() {
